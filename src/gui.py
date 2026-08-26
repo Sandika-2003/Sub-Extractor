@@ -17,6 +17,7 @@ try:
     from src.potplayer_controller import (
         PotPlayerController,
         scan_video_files,
+        organize_videos_into_folders,
         find_potplayer_path,
         get_all_potplayer_hwnds,
         calculate_window_positions,
@@ -26,6 +27,7 @@ except ImportError:
     from potplayer_controller import (
         PotPlayerController,
         scan_video_files,
+        organize_videos_into_folders,
         find_potplayer_path,
         get_all_potplayer_hwnds,
         calculate_window_positions,
@@ -43,6 +45,7 @@ COLOR_CARD_BORDER = "#30363d"
 COLOR_ACCENT_CYAN = "#00d2ff"
 COLOR_ACCENT_BLUE = "#0078d4"
 COLOR_ACCENT_GREEN = "#00e676"
+COLOR_ACCENT_TEAL = "#0d9488"
 COLOR_ACCENT_AMBER = "#ff9100"
 COLOR_ACCENT_PURPLE = "#a855f7"
 COLOR_ACCENT_RED = "#ff1744"
@@ -50,6 +53,15 @@ COLOR_TEXT_MAIN = "#f0f6fc"
 COLOR_TEXT_MUTED = "#8b949e"
 
 # Glassmorphic Badge / Button Styles
+STYLE_BTN_TEAL = {
+    "fg_color": "#0a2628",
+    "hover_color": "#113d40",
+    "text_color": "#5eead4",
+    "border_color": "#0d9488",
+    "border_width": 2,
+    "corner_radius": 14,
+}
+
 STYLE_BTN_CYAN = {
     "fg_color": "#0f263d",
     "hover_color": "#183b5e",
@@ -112,8 +124,8 @@ class ModernSubExtractorApp(ctk.CTk):
         super().__init__()
 
         self.title("PotPlayer Subtitle Extractor Studio")
-        self.geometry("620x780")
-        self.minsize(560, 700)
+        self.geometry("620x820")
+        self.minsize(560, 720)
 
         # Controller instance
         self.controller = PotPlayerController()
@@ -129,6 +141,7 @@ class ModernSubExtractorApp(ctk.CTk):
         self.is_paused_state = False
         self.batch_thread: Optional[threading.Thread] = None
         self.sub_thread: Optional[threading.Thread] = None
+        self.org_thread: Optional[threading.Thread] = None
 
         # Setup icon
         self._setup_window_icon()
@@ -156,10 +169,10 @@ class ModernSubExtractorApp(ctk.CTk):
 
         # --- 1. HEADER SECTION ---
         header_frame = ctk.CTkFrame(main_container, fg_color=COLOR_CARD_BG, corner_radius=16, border_width=1, border_color=COLOR_CARD_BORDER)
-        header_frame.pack(fill="x", pady=(0, 12), padx=2)
+        header_frame.pack(fill="x", pady=(0, 10), padx=2)
 
         header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
-        header_inner.pack(fill="x", padx=16, pady=12)
+        header_inner.pack(fill="x", padx=16, pady=10)
 
         title_label = ctk.CTkLabel(
             header_inner,
@@ -171,7 +184,7 @@ class ModernSubExtractorApp(ctk.CTk):
 
         subtitle_label = ctk.CTkLabel(
             header_inner,
-            text="Batch multi-instance video launcher, auto-tiling, 12x speed & Alt+S subtitle extractor",
+            text="Video folder organizer, multi-launcher, auto-tiling, 12x speed & subtitle extractor",
             font=ctk.CTkFont(size=12),
             text_color=COLOR_TEXT_MUTED,
         )
@@ -179,10 +192,10 @@ class ModernSubExtractorApp(ctk.CTk):
 
         # --- 2. STATUS CARD ---
         self.status_card = ctk.CTkFrame(main_container, fg_color="#121820", corner_radius=12, border_width=1, border_color="#1f2937")
-        self.status_card.pack(fill="x", pady=(0, 12), padx=2)
+        self.status_card.pack(fill="x", pady=(0, 10), padx=2)
 
         status_inner = ctk.CTkFrame(self.status_card, fg_color="transparent")
-        status_inner.pack(fill="x", padx=14, pady=10)
+        status_inner.pack(fill="x", padx=14, pady=8)
 
         # Left side: Status badge
         status_left = ctk.CTkFrame(status_inner, fg_color="transparent")
@@ -236,49 +249,60 @@ class ModernSubExtractorApp(ctk.CTk):
         )
         self.active_badge.pack(side="right")
 
-        # --- 3. HERO ACTION BUTTONS ---
+        # --- 3. HERO ACTION BUTTONS (1 to 5) ---
         actions_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        actions_frame.pack(fill="x", pady=(0, 12))
+        actions_frame.pack(fill="x", pady=(0, 10))
 
-        # BUTTON 1: SELECT VIDEOS & LAUNCH
+        # BUTTON 1: ORGANIZE VIDEOS INTO FOLDERS
+        self.btn_organize_videos = ctk.CTkButton(
+            actions_frame,
+            text="📁  1. Organize Videos into Dedicated Folders (1 Video -> 1 Folder)",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=48,
+            command=self.on_organize_videos_clicked,
+            **STYLE_BTN_TEAL
+        )
+        self.btn_organize_videos.pack(fill="x", pady=(0, 8))
+
+        # BUTTON 2: SELECT VIDEOS & LAUNCH
         self.btn_select_launch = ctk.CTkButton(
             actions_frame,
-            text="📂  1. Select Folder & Launch All Videos (12.0x)",
+            text="📂  2. Select Folder & Launch All Videos (12.0x)",
             font=ctk.CTkFont(size=15, weight="bold"),
-            height=52,
+            height=50,
             command=self.on_select_folder_clicked,
             **STYLE_BTN_CYAN
         )
-        self.btn_select_launch.pack(fill="x", pady=(0, 10))
+        self.btn_select_launch.pack(fill="x", pady=(0, 8))
 
-        # BUTTON 2: SAVE SUBTITLES (Alt + S)
+        # BUTTON 3: SAVE SUBTITLES (Alt + S)
         self.btn_save_subtitles = ctk.CTkButton(
             actions_frame,
-            text="💾  2. Save Subtitles (Alt + S)",
+            text="💾  3. Save Subtitles (Alt + S)",
             font=ctk.CTkFont(size=15, weight="bold"),
-            height=50,
+            height=48,
             command=self.on_save_subtitles_clicked,
             **STYLE_BTN_PURPLE
         )
-        self.btn_save_subtitles.pack(fill="x", pady=(0, 10))
+        self.btn_save_subtitles.pack(fill="x", pady=(0, 8))
 
-        # BUTTON 3: PAUSE / PLAY TOGGLE
+        # BUTTON 4: PAUSE / PLAY TOGGLE
         self.btn_toggle_play = ctk.CTkButton(
             actions_frame,
-            text="⏸️  3. Pause All Players",
+            text="⏸️  4. Pause All Players",
             font=ctk.CTkFont(size=15, weight="bold"),
-            height=48,
+            height=46,
             command=self.on_toggle_play_pause_clicked,
             **STYLE_BTN_AMBER
         )
-        self.btn_toggle_play.pack(fill="x", pady=(0, 10))
+        self.btn_toggle_play.pack(fill="x", pady=(0, 8))
 
-        # BUTTON 4: CLOSE ALL PLAYERS
+        # BUTTON 5: CLOSE ALL PLAYERS
         self.btn_close_all = ctk.CTkButton(
             actions_frame,
-            text="🛑  4. Close All Players",
+            text="🛑  5. Close All Players",
             font=ctk.CTkFont(size=15, weight="bold"),
-            height=46,
+            height=44,
             command=self.on_close_all_clicked,
             **STYLE_BTN_CRIMSON
         )
@@ -286,7 +310,7 @@ class ModernSubExtractorApp(ctk.CTk):
 
         # --- 4. PROGRESS BAR ---
         self.progress_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        self.progress_frame.pack(fill="x", pady=(4, 6))
+        self.progress_frame.pack(fill="x", pady=(2, 6))
 
         self.progress_bar = ctk.CTkProgressBar(
             self.progress_frame,
@@ -300,7 +324,7 @@ class ModernSubExtractorApp(ctk.CTk):
 
         # --- 5. LOG / ACTIVITY TERMINAL ---
         log_header_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        log_header_frame.pack(fill="x", pady=(4, 2))
+        log_header_frame.pack(fill="x", pady=(2, 2))
 
         ctk.CTkLabel(
             log_header_frame,
@@ -323,7 +347,7 @@ class ModernSubExtractorApp(ctk.CTk):
 
         self.log_textbox = ctk.CTkTextbox(
             main_container,
-            height=130,
+            height=125,
             font=ctk.CTkFont(family="Consolas", size=11),
             fg_color="#090d13",
             text_color="#c9d1d9",
@@ -331,7 +355,7 @@ class ModernSubExtractorApp(ctk.CTk):
             border_color=COLOR_CARD_BORDER,
             corner_radius=10,
         )
-        self.log_textbox.pack(fill="both", expand=True, pady=(0, 8))
+        self.log_textbox.pack(fill="both", expand=True, pady=(0, 6))
 
         # --- 6. COLLAPSIBLE SETTINGS ACCORDION ---
         self.settings_frame = ctk.CTkFrame(main_container, fg_color=COLOR_CARD_BG, corner_radius=12, border_width=1, border_color=COLOR_CARD_BORDER)
@@ -480,9 +504,42 @@ class ModernSubExtractorApp(ctk.CTk):
                 self.status_detail_label.configure(text=f"{active_count} videos playing @ {self.target_speed.get():.1f}x")
         else:
             self.status_pill.configure(text="● READY", text_color=COLOR_ACCENT_GREEN, fg_color="#003820")
-            self.status_detail_label.configure(text="Ready to select folder")
+            self.status_detail_label.configure(text=status_text or "Ready to select folder")
 
-    # --- BUTTON 1: SELECT FOLDER & LAUNCH ---
+    # --- BUTTON 1: ORGANIZE VIDEOS INTO DEDICATED FOLDERS ---
+    def on_organize_videos_clicked(self):
+        folder = filedialog.askdirectory(title="Select Folder with Videos to Organize into Folders")
+        if not folder:
+            return
+
+        self.log(f"📁 Organizing videos in: {folder}")
+        self._update_system_status(is_running=True, status_text=f"Organizing videos in {os.path.basename(folder)}...")
+
+        def progress_cb(current, total, msg):
+            fraction = current / max(1, total)
+            self.after(0, lambda: self.progress_bar.set(fraction))
+            self.after(0, lambda: self.log(f"📁 {msg}"))
+
+        def worker():
+            try:
+                results = organize_videos_into_folders(folder, on_progress=progress_cb)
+                def done():
+                    self.progress_bar.set(1.0)
+                    if results:
+                        self.log(f"🎉 Successfully organized {len(results)} videos into their own dedicated folders!")
+                        self._update_system_status(is_running=False, status_text=f"Organized {len(results)} videos into dedicated folders")
+                    else:
+                        self.log("ℹ️ All videos in this folder are already in their own dedicated folders.")
+                        self._update_system_status(is_running=False, status_text="All videos already organized")
+                self.after(0, done)
+            except Exception as e:
+                self.after(0, lambda: self.log(f"❌ Error organizing videos: {e}"))
+                self.after(0, lambda: self._update_system_status())
+
+        self.org_thread = threading.Thread(target=worker, daemon=True)
+        self.org_thread.start()
+
+    # --- BUTTON 2: SELECT FOLDER & LAUNCH ---
     def on_select_folder_clicked(self):
         if not self.controller.is_available():
             messagebox.showerror(
@@ -494,7 +551,7 @@ class ModernSubExtractorApp(ctk.CTk):
         if self.controller.is_running_batch:
             self.controller.cancel_batch()
             self.btn_select_launch.configure(
-                text="📂  1. Select Folder & Launch All Videos (12.0x)",
+                text="📂  2. Select Folder & Launch All Videos (12.0x)",
                 **STYLE_BTN_CYAN
             )
             self.log("🛑 Batch launch cancellation requested...")
@@ -509,8 +566,8 @@ class ModernSubExtractorApp(ctk.CTk):
 
         videos = scan_video_files(folder, recursive=self.scan_recursive.get())
         if not videos:
-            messagebox.showwarning("No Videos Found", f"No supported video files found in:\n{folder}")
             self.log(f"⚠️ No video files found in {folder}")
+            self._update_system_status(status_text="No video files found")
             return
 
         self.log(f"🔍 Found {len(videos)} video files across folder & subfolders (Naturally sorted).")
@@ -526,7 +583,7 @@ class ModernSubExtractorApp(ctk.CTk):
         cols = (len(videos) + max_rows - 1) // max_rows
         self.log(f"📐 Auto-Tiling Layout: {cols} Column(s) × Up to {max_rows} Rows per column")
 
-        # Switch Button 1 to Crimson Cancel Style while running
+        # Switch Button 2 to Crimson Cancel Style while running
         self.btn_select_launch.configure(
             text="⏹️  Cancel Launch Operation",
             **STYLE_BTN_CRIMSON
@@ -568,26 +625,26 @@ class ModernSubExtractorApp(ctk.CTk):
 
     def _on_batch_finished(self, total_launched):
         self.progress_bar.set(1.0)
-        # Restore Button 1 to Cyan Glass Style
+        # Restore Button 2 to Cyan Glass Style
         self.btn_select_launch.configure(
-            text="📂  1. Select Folder & Launch All Videos (12.0x)",
+            text="📂  2. Select Folder & Launch All Videos (12.0x)",
             **STYLE_BTN_CYAN
         )
         self.is_paused_state = False
-        # Restore Button 3 to Amber Glass Style
+        # Restore Button 4 to Amber Glass Style
         self.btn_toggle_play.configure(
-            text="⏸️  3. Pause All Players",
+            text="⏸️  4. Pause All Players",
             **STYLE_BTN_AMBER
         )
         self.log(f"🎉 Batch setup completed! {total_launched} PotPlayer instances running at {self.target_speed.get():.1f}x.")
         self._update_system_status()
 
-    # --- BUTTON 2: SAVE SUBTITLES (Alt + S) ---
+    # --- BUTTON 3: SAVE SUBTITLES (Alt + S) ---
     def on_save_subtitles_clicked(self):
         active_hwnds = self.controller.get_active_hwnds()
         if not active_hwnds:
             self.log("⚠️ No active PotPlayer windows found to save subtitles.")
-            messagebox.showinfo("No Players Open", "No PotPlayer windows are currently open.\nPlease select a folder and open videos first.")
+            self._update_system_status(status_text="No active players to save subtitles")
             return
 
         self.log(f"💾 Triggering Save Subtitles (Alt + S) across {len(active_hwnds)} players...")
@@ -602,7 +659,7 @@ class ModernSubExtractorApp(ctk.CTk):
             def done():
                 self.progress_bar.set(1.0)
                 self.log(f"✅ Alt + S Subtitle save completed for {saved_count} players!")
-                self._update_system_status()
+                self._update_system_status(status_text=f"Subtitles saved on {saved_count} players")
             self.after(0, done)
 
         def worker():
@@ -618,12 +675,12 @@ class ModernSubExtractorApp(ctk.CTk):
         self.sub_thread = threading.Thread(target=worker, daemon=True)
         self.sub_thread.start()
 
-    # --- BUTTON 3: PAUSE / PLAY TOGGLE ---
+    # --- BUTTON 4: PAUSE / PLAY TOGGLE ---
     def on_toggle_play_pause_clicked(self):
         active_hwnds = self.controller.get_active_hwnds()
         if not active_hwnds:
             self.log("⚠️ No active PotPlayer windows found to pause/play.")
-            messagebox.showinfo("No Players Open", "No PotPlayer windows are currently open.")
+            self._update_system_status(status_text="No active players to pause/resume")
             return
 
         new_is_paused = self.controller.toggle_play_pause()
@@ -632,21 +689,21 @@ class ModernSubExtractorApp(ctk.CTk):
         if new_is_paused:
             # Switch to Emerald Resume Style
             self.btn_toggle_play.configure(
-                text="▶️  3. Resume All Players",
+                text="▶️  4. Resume All Players",
                 **STYLE_BTN_EMERALD
             )
             self.log(f"⏸️ PAUSED all {len(active_hwnds)} PotPlayer instances.")
         else:
             # Switch to Amber Pause Style
             self.btn_toggle_play.configure(
-                text="⏸️  3. Pause All Players",
+                text="⏸️  4. Pause All Players",
                 **STYLE_BTN_AMBER
             )
             self.log(f"▶️ RESUMED playback on all {len(active_hwnds)} PotPlayer instances.")
 
         self._update_system_status()
 
-    # --- BUTTON 4: CLOSE ALL PLAYERS ---
+    # --- BUTTON 5: CLOSE ALL PLAYERS ---
     def on_close_all_clicked(self):
         active_count = len(self.controller.get_active_hwnds())
         if active_count == 0:
@@ -658,20 +715,28 @@ class ModernSubExtractorApp(ctk.CTk):
         self.progress_bar.set(0)
         self.is_paused_state = False
         # Ensure buttons keep their styles
+        self.btn_organize_videos.configure(
+            text="📁  1. Organize Videos into Dedicated Folders (1 Video -> 1 Folder)",
+            **STYLE_BTN_TEAL
+        )
         self.btn_select_launch.configure(
-            text="📂  1. Select Folder & Launch All Videos (12.0x)",
+            text="📂  2. Select Folder & Launch All Videos (12.0x)",
             **STYLE_BTN_CYAN
         )
+        self.btn_save_subtitles.configure(
+            text="💾  3. Save Subtitles (Alt + S)",
+            **STYLE_BTN_PURPLE
+        )
         self.btn_toggle_play.configure(
-            text="⏸️  3. Pause All Players",
+            text="⏸️  4. Pause All Players",
             **STYLE_BTN_AMBER
         )
         self.btn_close_all.configure(
-            text="🛑  4. Close All Players",
+            text="🛑  5. Close All Players",
             **STYLE_BTN_CRIMSON
         )
         self.log(f"✅ Closed {closed} PotPlayer windows/processes.")
-        self._update_system_status()
+        self._update_system_status(status_text=f"Closed {closed} players")
 
 
 def run_app():

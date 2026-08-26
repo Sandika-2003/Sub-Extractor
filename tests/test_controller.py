@@ -96,6 +96,28 @@ class TestPotPlayerController(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_organize_videos_into_folders(self):
+        """Verify creating dedicated folders and moving videos inside."""
+        import tempfile
+        import shutil
+        from src.potplayer_controller import organize_videos_into_folders
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            v1 = os.path.join(temp_dir, "MyMovie.mp4")
+            v2 = os.path.join(temp_dir, "Show_S01E01.mkv")
+            with open(v1, "w") as f: f.write("0")
+            with open(v2, "w") as f: f.write("0")
+
+            results = organize_videos_into_folders(temp_dir)
+            self.assertEqual(len(results), 2)
+            self.assertTrue(os.path.isdir(os.path.join(temp_dir, "MyMovie")))
+            self.assertTrue(os.path.isfile(os.path.join(temp_dir, "MyMovie", "MyMovie.mp4")))
+            self.assertTrue(os.path.isdir(os.path.join(temp_dir, "Show_S01E01")))
+            self.assertTrue(os.path.isfile(os.path.join(temp_dir, "Show_S01E01", "Show_S01E01.mkv")))
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

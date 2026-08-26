@@ -1,13 +1,15 @@
 """
 PotPlayer Controller Engine
 Provides high-speed automation, real-time layout watchdog, audio inspection,
-Alt+S subtitle extraction & auto-confirmation, and Win32 message control for multi-instance PotPlayer playback.
+Alt+S subtitle extraction & auto-confirmation, folder video organization,
+and Win32 message control for multi-instance PotPlayer playback.
 """
 
 import os
 import re
 import sys
 import time
+import shutil
 import subprocess
 import threading
 import ctypes
@@ -128,6 +130,71 @@ def scan_video_files(folder_path: str, recursive: bool = True, custom_exts: Opti
     # Naturally sort by relative path so subfolder contents are organized cleanly in order
     video_files.sort(key=lambda p: natural_sort_key(os.path.relpath(p, folder_path)))
     return video_files
+
+
+def organize_videos_into_folders(
+    folder_path: str,
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+) -> List[Tuple[str, str]]:
+    """
+    Scans folder for videos, creates a dedicated folder named after each video,
+    and moves the video (along with any matching subtitle files) into that new folder.
+    Returns list of (video_filename, target_folder_name).
+    """
+    if not os.path.isdir(folder_path):
+        return []
+
+    # 1. Collect all video files
+    video_candidates = []
+    for root, _, files in os.walk(folder_path):
+        for f in files:
+            name, ext = os.path.splitext(f)
+            if ext.lower() in SUPPORTED_VIDEO_EXTS:
+                full_video_path = os.path.join(root, f)
+                parent_dir = root
+                parent_name = os.path.basename(parent_dir)
+                
+                # If already in a folder with the same name, skip
+                if parent_name.lower() == name.lower():
+                    continue
+
+                target_folder = os.path.join(parent_dir, name)
+                target_video_path = os.path.join(target_folder, f)
+                video_candidates.append((full_video_path, target_folder, target_video_path, f, name, parent_dir))
+
+    total = len(video_candidates)
+    if total == 0:
+        return []
+
+    results = []
+    # 2. Execute moves
+    for idx, (src_video, target_folder, dst_video, fname, stem, p_dir) in enumerate(video_candidates):
+        if on_progress:
+            on_progress(idx + 1, total, f"Organizing [{idx+1}/{total}]: {fname} -> {stem}/")
+
+        try:
+            os.makedirs(target_folder, exist_ok=True)
+            if not os.path.exists(dst_video):
+                shutil.move(src_video, dst_video)
+                results.append((fname, stem))
+
+                # Also move any matching subtitle/nfo files if present (e.g. video.srt, video.ass)
+                for companion_file in os.listdir(p_dir):
+                    c_name, c_ext = os.path.splitext(companion_file)
+                    c_path = os.path.join(p_dir, companion_file)
+                    if c_name == stem and os.path.isfile(c_path) and c_path != dst_video:
+                        c_target = os.path.join(target_folder, companion_file)
+                        if not os.path.exists(c_target):
+                            try:
+                                shutil.move(c_path, c_target)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
+        time.sleep(0.01)
+
+    return results
 
 
 def get_all_potplayer_hwnds() -> List[int]:

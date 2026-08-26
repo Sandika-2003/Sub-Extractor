@@ -4,17 +4,20 @@ A high-performance Windows desktop automation tool and subtitle extraction compa
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
-- 📂 **Deep Recursive Folder Scanning**: Scans chosen directories and all subfolders, sorting video files with human-friendly natural alphanumeric ordering (ep01.mp4, ep02.mp4...).
-- 🎬 **Multi-Instance Auto-Tiling**: Opens each video file in its own dedicated PotPlayer instance (/new), resizes each window to the absolute minimum height & width (320x100 px), and auto-tiles them vertically in columns across the screen without overlap.
-- 🛡️ **Real-Time Layout Watchdog**: Actively monitors all player windows and prevents video decoder auto-fit events from breaking the column grid layout.
-- ⚡ **12.0x Fast-Forward Acceleration**: Automatically boosts every launched instance to 12.0x playback speed via hardware-attached keyboard pulses and IPC commands.
-- 💾 **Automated Alt+S Subtitle Extraction**: Automatically iterates through all open instances, triggers Alt + S, and auto-confirms the Save Dialog to extract subtitles.
-- 🔇 **Smart Auto-Mute**: Automatically silences audio on all instances using command-line arguments and audio inspection.
-- ⏸️/▶️ **Synchronous State-Aware Pause & Resume**: Freezes and unfreezes all video playback in perfect unison.
-- 🛑 **One-Click Close**: Closes all active player instances and orphans instantly while protecting the main application process.
-- 💎 **Modern Glassmorphic Dashboard**: Built with CustomTkinter featuring dark translucent glass badge buttons and live activity logging.
+1. 📁 **1. Organize Videos into Dedicated Folders (1 Video -> 1 Folder)**: Automatically scans a chosen directory and organizes each video into its own dedicated folder matching the filename (along with matching subtitle files) with non-intrusive status logging.
+2. 📂 **2. Select Folder & Launch All Videos (12.0x)**: Opens all videos in naturally sorted alphanumeric order, mutes audio, auto-tiles them vertically in columns (320x100 px), and boosts playback speed to 12.0x.
+3. 💾 **3. Save Subtitles (Alt + S)**: Automated rapid Alt + S keystroke dispatch with automatic Save Dialog capture & Enter confirmation across all instances.
+4. ⏸️/▶️ **4. Synchronized Pause & Resume**: State-aware Play/Pause toggle command (10014) keeping all video instances in sync.
+5. 🛑 **5. One-Click Close All**: Safely closes all PotPlayer instances and background processes while protecting the application itself.
+
+---
+
+## 💎 Design & Automation Highlights
+- **Real-Time Layout Watchdog**: Actively monitors player windows and prevents video decoder auto-fit events from breaking the column grid layout.
+- **Glassmorphic UI**: Translucent dark glass badges with permanent color palettes built on CustomTkinter.
+- **Natural Order Sorting**: Human-friendly alphanumeric sorting (ideo 1, ideo 2, ideo 10).
 
 ---
 
