@@ -1,0 +1,34 @@
+﻿# Python & Bytecode
+__pycache__/
+*.py[cod]
+*.class
+*.pyc
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# PyInstaller & Build artifacts
+build/
+dist/
+*.spec
+*.manifest
+
+# IDE & Editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.BIN/
+.DS_Store
