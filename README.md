@@ -4,21 +4,28 @@ A high-performance Windows desktop automation tool and subtitle extraction compa
 
 ---
 
-## Features
+## ✨ Features
 
-- Deep Recursive Folder Scanning
-- Multi-Instance Auto-Tiling & Grid Alignment
-- Real-Time Layout Watchdog Engine
-- 12.0x Fast-Forward Playback Acceleration
-- Smart Auto-Mute on launch
-- Synchronous State-Aware Pause & Resume
-- Safe One-Click Player Termination
-- Modern Glassmorphic UI Dashboard
+- 📂 **Deep Recursive Folder Scanning**: Scans chosen directories and all subfolders, sorting video files with human-friendly natural alphanumeric ordering (ep01.mp4, ep02.mp4...).
+- 🎬 **Multi-Instance Auto-Tiling**: Opens each video file in its own dedicated PotPlayer instance (/new), resizes each window to the absolute minimum height & width (320x100 px), and auto-tiles them vertically in columns across the screen without overlap.
+- 🛡️ **Real-Time Layout Watchdog**: Actively monitors all player windows and prevents video decoder auto-fit events from breaking the column grid layout.
+- ⚡ **12.0x Fast-Forward Acceleration**: Automatically boosts every launched instance to 12.0x playback speed via hardware-attached keyboard pulses and IPC commands.
+- 💾 **Automated Alt+S Subtitle Extraction**: Automatically iterates through all open instances, triggers Alt + S, and auto-confirms the Save Dialog to extract subtitles.
+- 🔇 **Smart Auto-Mute**: Automatically silences audio on all instances using command-line arguments and audio inspection.
+- ⏸️/▶️ **Synchronous State-Aware Pause & Resume**: Freezes and unfreezes all video playback in perfect unison.
+- 🛑 **One-Click Close**: Closes all active player instances and orphans instantly while protecting the main application process.
+- 💎 **Modern Glassmorphic Dashboard**: Built with CustomTkinter featuring dark translucent glass badge buttons and live activity logging.
 
 ---
 
-## Installation & Running
+## 🚀 Installation & Running
 
+### Requirements
+- Windows 10 / 11 (64-bit)
+- Python 3.10+ (or use the standalone .exe)
+- PotPlayer (64-bit or 32-bit)
+
+### Setup (Source Code)
 `ash
 git clone https://github.com/Sandika-2003/Sub-Extractor.git
 cd Sub-Extractor
@@ -26,5 +33,15 @@ pip install -r requirements.txt
 python main.py
 `
 
-## Tech Stack
-- CustomTkinter, Pillow, pywin32, psutil, pycaw, PyInstaller
+### Build Standalone Executable
+`ash
+python build_exe.py
+`
+The compiled single-file binary will be generated inside dist/PotPlayerSubExtractor.exe.
+
+---
+
+## 🛠️ Tech Stack
+- **UI Framework**: customtkinter, Pillow
+- **Windows Automation**: pywin32, psutil, pycaw, ctypes
+- **Packaging**: PyInstaller

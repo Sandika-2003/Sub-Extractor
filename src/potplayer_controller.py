@@ -1,7 +1,7 @@
 """
 PotPlayer Controller Engine
 Provides high-speed automation, real-time layout watchdog, audio inspection,
-and Win32 message control for multi-instance PotPlayer playback and subtitle extraction.
+Alt+S subtitle extraction & auto-confirmation, and Win32 message control for multi-instance PotPlayer playback.
 """
 
 import os
@@ -44,8 +44,11 @@ POT_CMD_SPEED_NORMAL = 10285   # Resets speed to 1.0x
 
 # Virtual Key Codes
 VK_C = 0x43  # 'C' key (PotPlayer shortcut for speed up)
+VK_S = 0x53  # 'S' key (Used with Alt for Save Subtitle)
 VK_M = 0x4D  # 'M' key (PotPlayer shortcut for mute)
 VK_SPACE = 0x20
+VK_MENU = win32con.VK_MENU  # Alt key
+VK_RETURN = win32con.VK_RETURN
 
 SUPPORTED_VIDEO_EXTS = {
     ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
@@ -449,6 +452,142 @@ class PotPlayerController:
 
         if on_finished:
             on_finished(len(self.launched_hwnds))
+
+    def save_subtitles_all(
+        self,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+        on_finished: Optional[Callable[[int], None]] = None,
+    ) -> int:
+        """
+        Rapidly iterates through all open PotPlayer instances one by one,
+        triggers Alt + S, and automatically confirms the Save dialog.
+        """
+        hwnds = self.get_active_hwnds()
+        if not hwnds:
+            if on_finished:
+                on_finished(0)
+            return 0
+
+        cur_tid = win32api.GetCurrentThreadId()
+        scan_alt = win32api.MapVirtualKey(VK_MENU, 0)
+        scan_s = win32api.MapVirtualKey(VK_S, 0)
+        scan_ret = win32api.MapVirtualKey(VK_RETURN, 0)
+        total = len(hwnds)
+        success_count = 0
+
+        for idx, h in enumerate(hwnds):
+            try:
+                title = win32gui.GetWindowText(h) or f"Player {idx+1}"
+                clean_name = title.replace(" - PotPlayer", "").replace("PotPlayer", "").strip() or f"Instance {idx+1}"
+                if on_progress:
+                    on_progress(idx + 1, total, f"[{idx+1}/{total}] Saving subtitles: {clean_name}")
+
+                pot_tid, pot_pid = win32process.GetWindowThreadProcessId(h)
+                if pot_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, pot_tid, True)
+
+                user32.SetForegroundWindow(h)
+                user32.SetFocus(h)
+                time.sleep(0.04)
+
+                # 1. Send Alt + S keystroke to open Save Dialog
+                win32api.keybd_event(VK_MENU, scan_alt, 0, 0)
+                time.sleep(0.01)
+                win32api.keybd_event(VK_S, scan_s, 0, 0)
+                time.sleep(0.01)
+                win32api.keybd_event(VK_S, scan_s, win32con.KEYEVENTF_KEYUP, 0)
+                time.sleep(0.01)
+                win32api.keybd_event(VK_MENU, scan_alt, win32con.KEYEVENTF_KEYUP, 0)
+
+                if pot_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, pot_tid, False)
+
+                # 2. Look for Save Dialog (#32770)
+                dialog_hwnd = None
+                for _ in range(12):  # Wait up to 0.48s
+                    time.sleep(0.04)
+                    dlg_candidates = []
+                    def enum_dlg(dlg_h, _):
+                        try:
+                            if win32gui.IsWindowVisible(dlg_h):
+                                cls = win32gui.GetClassName(dlg_h)
+                                _, ppid = win32process.GetWindowThreadProcessId(dlg_h)
+                                if ppid == pot_pid and cls == "#32770":
+                                    dlg_candidates.append(dlg_h)
+                        except Exception:
+                            pass
+                        return True
+
+                    try:
+                        win32gui.EnumWindows(enum_dlg, None)
+                    except Exception:
+                        pass
+
+                    if dlg_candidates:
+                        dialog_hwnd = dlg_candidates[0]
+                        break
+
+                # 3. If Save Dialog appeared, confirm Save with ENTER
+                if dialog_hwnd:
+                    dtid, _ = win32process.GetWindowThreadProcessId(dialog_hwnd)
+                    if dtid != cur_tid:
+                        user32.AttachThreadInput(cur_tid, dtid, True)
+
+                    user32.SetForegroundWindow(dialog_hwnd)
+                    user32.SetFocus(dialog_hwnd)
+                    time.sleep(0.06)
+
+                    # Send ENTER to save
+                    win32api.keybd_event(VK_RETURN, scan_ret, 0, 0)
+                    time.sleep(0.01)
+                    win32api.keybd_event(VK_RETURN, scan_ret, win32con.KEYEVENTF_KEYUP, 0)
+
+                    if dtid != cur_tid:
+                        user32.AttachThreadInput(cur_tid, dtid, False)
+
+                    # 4. Check for overwrite confirmation prompt
+                    time.sleep(0.1)
+                    confirm_candidates = []
+                    def enum_confirm(c_h, _):
+                        try:
+                            if win32gui.IsWindowVisible(c_h) and win32gui.GetClassName(c_h) == "#32770":
+                                _, ppid = win32process.GetWindowThreadProcessId(c_h)
+                                if ppid == pot_pid and c_h != dialog_hwnd:
+                                    confirm_candidates.append(c_h)
+                        except Exception:
+                            pass
+                        return True
+
+                    try:
+                        win32gui.EnumWindows(enum_confirm, None)
+                    except Exception:
+                        pass
+
+                    if confirm_candidates:
+                        c_hwnd = confirm_candidates[0]
+                        ctid, _ = win32process.GetWindowThreadProcessId(c_hwnd)
+                        if ctid != cur_tid:
+                            user32.AttachThreadInput(cur_tid, ctid, True)
+                        user32.SetForegroundWindow(c_hwnd)
+                        time.sleep(0.03)
+                        win32api.keybd_event(VK_RETURN, scan_ret, 0, 0)
+                        time.sleep(0.01)
+                        win32api.keybd_event(VK_RETURN, scan_ret, win32con.KEYEVENTF_KEYUP, 0)
+                        if ctid != cur_tid:
+                            user32.AttachThreadInput(cur_tid, ctid, False)
+
+                success_count += 1
+                time.sleep(0.05)
+            except Exception:
+                pass
+
+        if on_progress:
+            on_progress(total, total, f"Subtitles saved on all {success_count}/{total} players!")
+
+        if on_finished:
+            on_finished(success_count)
+
+        return success_count
 
     def pause_all(self):
         """Synchronously pause all open PotPlayer instances."""
