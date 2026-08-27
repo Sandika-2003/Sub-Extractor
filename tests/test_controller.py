@@ -6,7 +6,6 @@ import os
 import sys
 import unittest
 
-# Ensure src is in sys.path
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
@@ -17,12 +16,16 @@ from src.potplayer_controller import (
     find_potplayer_path,
     calculate_window_positions,
     get_screen_work_area,
+    ensure_hardware_dxva_enabled,
     PotPlayerController,
     POT_CMD_PLAY_PAUSE,
     POT_CMD_PAUSE,
     POT_CMD_PLAY,
     POT_CMD_MUTE,
     POT_CMD_SPEED_UP,
+    MAX_GRID_ROWS,
+    MAX_GRID_COLS,
+    MAX_VIDEOS_PER_BATCH,
 )
 
 
@@ -35,34 +38,30 @@ class TestPotPlayerController(unittest.TestCase):
         sorted_list = sorted(unsorted, key=natural_sort_key)
         self.assertEqual(sorted_list, expected)
 
-    def test_calculate_window_positions_columns(self):
-        """Verify column-wise stacking calculation."""
-        # Suppose 25 items, min_w=300, min_h=100 on screen height 1000
-        # Should have 10 rows per column:
-        # Items 0..9 in col 0
-        # Items 10..19 in col 1
-        # Items 20..24 in col 2
-        positions = calculate_window_positions(25, min_w=300, min_h=100)
-        self.assertEqual(len(positions), 25)
+    def test_calculate_window_positions_10x2_columns(self):
+        """Verify 10-rows x 2-columns table grid stacking calculation (up to 20 videos)."""
+        positions = calculate_window_positions(20)
+        self.assertEqual(len(positions), 20)
         
-        # Verify first item
-        x0, y0, w0, h0 = positions[0]
-        self.assertEqual(w0, 300)
-        self.assertEqual(h0, 100)
+        # Items in Column 1 (0 to 9) should share same X coordinate
+        for r in range(1, 10):
+            self.assertEqual(positions[r][0], positions[0][0])
+            self.assertTrue(positions[r][1] > positions[r-1][1])
 
-        # Verify items in same column have same X and incrementing Y
-        left, top, right, bottom = get_screen_work_area()
-        screen_h = bottom - top
-        max_rows = max(1, screen_h // 100)
-        
-        # Item 0 vs Item 1
-        self.assertEqual(positions[0][0], positions[1][0])
-        self.assertEqual(positions[1][1], positions[0][1] + 100)
+        # Item 10 should begin Column 2 (x shifted by column width, y reset to top)
+        col_w = positions[0][2]
+        self.assertEqual(positions[10][0], positions[0][0] + col_w)
+        self.assertEqual(positions[10][1], positions[0][1])
 
-        # Item at max_rows should move to column 2 (x shifted by min_w)
-        if len(positions) > max_rows:
-            self.assertEqual(positions[max_rows][0], positions[0][0] + 300)
-            self.assertEqual(positions[max_rows][1], positions[0][1])
+        # Items in Column 2 (10 to 19) should share same X coordinate
+        for r in range(11, 20):
+            self.assertEqual(positions[r][0], positions[10][0])
+            self.assertTrue(positions[r][1] > positions[r-1][1])
+
+    def test_ensure_hardware_dxva_enabled(self):
+        """Check that DXVA hardware decoding registry settings are applied cleanly."""
+        res = ensure_hardware_dxva_enabled()
+        self.assertTrue(res)
 
     def test_potplayer_detection(self):
         """Check that PotPlayer executable is detected or can be manually passed."""

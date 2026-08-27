@@ -1,6 +1,7 @@
 """
-PotPlayer Multi-Instance Automation & Subtitle Extractor GUI
+Sub Extractor Studio GUI
 Modern Glassmorphism UI built with CustomTkinter.
+Extracts embedded subtitle files from videos in bulk using PotPlayer with H/W DXVA Acceleration.
 """
 
 import os
@@ -22,6 +23,10 @@ try:
         get_all_potplayer_hwnds,
         calculate_window_positions,
         get_screen_work_area,
+        ensure_hardware_dxva_enabled,
+        MAX_VIDEOS_PER_BATCH,
+        MAX_GRID_ROWS,
+        MAX_GRID_COLS,
     )
 except ImportError:
     from potplayer_controller import (
@@ -32,6 +37,10 @@ except ImportError:
         get_all_potplayer_hwnds,
         calculate_window_positions,
         get_screen_work_area,
+        ensure_hardware_dxva_enabled,
+        MAX_VIDEOS_PER_BATCH,
+        MAX_GRID_ROWS,
+        MAX_GRID_COLS,
     )
 
 # Appearance setup
@@ -117,13 +126,199 @@ def get_resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
+class HighLoadWarningDialog(ctk.CTkToplevel):
+    """
+    Modern glassmorphic warning modal dialog matching application theme.
+    Shown when the user selects a folder with 21 or more video files.
+    """
+
+    def __init__(self, parent, video_count: int, max_limit: int = 20):
+        super().__init__(parent)
+        self.video_count = video_count
+        self.max_limit = max_limit
+        self.user_choice: Optional[str] = "cancel"  # 'continue' or 'cancel'
+
+        self.title("High Processing Load Warning")
+        self.geometry("540x510")
+        self.resizable(False, False)
+        self.configure(fg_color=COLOR_BG_DARK)
+
+        # Set window icon
+        ico_path = get_resource_path(os.path.join("assets", "app_icon.ico"))
+        if os.path.isfile(ico_path):
+            try:
+                self.iconbitmap(ico_path)
+            except Exception:
+                pass
+
+        # Make modal & center over parent
+        self.transient(parent)
+        self._center_window(parent)
+
+        self._create_widgets()
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+
+    def _center_window(self, parent):
+        parent.update_idletasks()
+        px = parent.winfo_x()
+        py = parent.winfo_y()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        w = 540
+        h = 510
+        x = px + max(0, (pw - w) // 2)
+        y = py + max(0, (ph - h) // 2)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _create_widgets(self):
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=22, pady=20)
+
+        # --- Header Card ---
+        header_card = ctk.CTkFrame(
+            container,
+            fg_color="#2b1408",
+            corner_radius=14,
+            border_width=1,
+            border_color="#d97706",
+        )
+        header_card.pack(fill="x", pady=(0, 14))
+
+        header_inner = ctk.CTkFrame(header_card, fg_color="transparent")
+        header_inner.pack(fill="x", padx=16, pady=12)
+
+        icon_lbl = ctk.CTkLabel(
+            header_inner,
+            text="⚠️",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#fde047",
+        )
+        icon_lbl.pack(side="left", padx=(0, 10))
+
+        title_lbl = ctk.CTkLabel(
+            header_inner,
+            text=f"High Processing Load Warning (Max {self.max_limit} Videos)",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color="#fde047",
+        )
+        title_lbl.pack(side="left")
+
+        # --- Message Content Card ---
+        content_card = ctk.CTkFrame(
+            container,
+            fg_color=COLOR_CARD_BG,
+            corner_radius=14,
+            border_width=1,
+            border_color=COLOR_CARD_BORDER,
+        )
+        content_card.pack(fill="both", expand=True, pady=(0, 16))
+
+        content_inner = ctk.CTkFrame(content_card, fg_color="transparent")
+        content_inner.pack(fill="both", expand=True, padx=18, pady=14)
+
+        # 1. Found count
+        count_lbl = ctk.CTkLabel(
+            content_inner,
+            text=f"Found {self.video_count} video files in the selected folder.",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=COLOR_TEXT_MAIN,
+            anchor="w",
+            justify="left",
+        )
+        count_lbl.pack(fill="x", pady=(0, 10))
+
+        # 2. Warning detail
+        warn_text = (
+            f"⚠️ Running more than {self.max_limit} videos simultaneously requires heavy system "
+            f"processing power and CPU/GPU hardware resources. Running too many video instances "
+            f"can overload your computer, cause intense lag, or lead to failed video decoding."
+        )
+        warn_lbl = ctk.CTkLabel(
+            content_inner,
+            text=warn_text,
+            font=ctk.CTkFont(size=12),
+            text_color="#fca5a5",
+            anchor="w",
+            justify="left",
+            wraplength=450,
+        )
+        warn_lbl.pack(fill="x", pady=(0, 12))
+
+        # Divider line
+        div = ctk.CTkFrame(content_inner, fg_color="#30363d", height=1)
+        div.pack(fill="x", pady=(0, 12))
+
+        # 3. Recommended Action
+        rec_title_lbl = ctk.CTkLabel(
+            content_inner,
+            text="💡 Recommended Action:",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#5eead4",
+            anchor="w",
+            justify="left",
+        )
+        rec_title_lbl.pack(fill="x", pady=(0, 4))
+
+        rec_text = (
+            f"Please organize your videos manually into separate folders containing up to "
+            f"{self.max_limit} videos each, and run each folder separately at different times."
+        )
+        rec_lbl = ctk.CTkLabel(
+            content_inner,
+            text=rec_text,
+            font=ctk.CTkFont(size=12),
+            text_color=COLOR_TEXT_MUTED,
+            anchor="w",
+            justify="left",
+            wraplength=450,
+        )
+        rec_lbl.pack(fill="x", pady=(0, 4))
+
+        # --- Action Buttons ---
+        btn_frame = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        # Stop Process & Exit Button (Crimson)
+        btn_cancel = ctk.CTkButton(
+            btn_frame,
+            text="🛑  Stop Process & Exit Warning",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=46,
+            command=self.on_cancel,
+            **STYLE_BTN_CRIMSON
+        )
+        btn_cancel.pack(fill="x", pady=(0, 8))
+
+        # Continue with first 20 videos Button (Cyan)
+        btn_continue = ctk.CTkButton(
+            btn_frame,
+            text=f"▶️  Continue with First {self.max_limit} Videos",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            height=42,
+            command=self.on_continue,
+            **STYLE_BTN_CYAN
+        )
+        btn_continue.pack(fill="x")
+
+    def on_continue(self):
+        self.user_choice = "continue"
+        self.grab_release()
+        self.destroy()
+
+    def on_cancel(self):
+        self.user_choice = "cancel"
+        self.grab_release()
+        self.destroy()
+
+
 class ModernSubExtractorApp(ctk.CTk):
     """Main Glassmorphic GUI Application."""
 
     def __init__(self):
         super().__init__()
 
-        self.title("PotPlayer Subtitle Extractor Studio")
+        self.title("Sub Extractor Studio")
         self.geometry("620x820")
         self.minsize(560, 720)
 
@@ -134,7 +329,7 @@ class ModernSubExtractorApp(ctk.CTk):
         self.selected_folder = ctk.StringVar(value="")
         self.target_speed = ctk.DoubleVar(value=12.0)
         self.scan_recursive = ctk.BooleanVar(value=True)
-        self.tile_min_w = ctk.IntVar(value=320)
+        self.tile_min_w = ctk.IntVar(value=340)
         self.tile_min_h = ctk.IntVar(value=100)
         self.pot_path_var = ctk.StringVar(value=self.controller.potplayer_exe or "Not Found")
         
@@ -172,23 +367,32 @@ class ModernSubExtractorApp(ctk.CTk):
         header_frame.pack(fill="x", pady=(0, 10), padx=2)
 
         header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
-        header_inner.pack(fill="x", padx=16, pady=10)
+        header_inner.pack(fill="x", padx=16, pady=12)
+
+        # Icon in col 0, Title in row 0 col 1, Subtitle in row 1 col 1 (Aligning 'E' in Extract exactly with 'P' in PotPlayer)
+        icon_label = ctk.CTkLabel(
+            header_inner,
+            text="⚡",
+            font=ctk.CTkFont(size=22, weight="bold"),
+            text_color=COLOR_ACCENT_CYAN,
+        )
+        icon_label.grid(row=0, column=0, rowspan=1, sticky="nw", padx=(0, 6), pady=(0, 0))
 
         title_label = ctk.CTkLabel(
             header_inner,
-            text="⚡ PotPlayer Sub Extractor Studio",
+            text="PotPlayer Sub Extractor Studio",
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color=COLOR_ACCENT_CYAN,
         )
-        title_label.pack(anchor="w")
+        title_label.grid(row=0, column=1, sticky="w", pady=(0, 1))
 
         subtitle_label = ctk.CTkLabel(
             header_inner,
-            text="Video folder organizer, multi-launcher, auto-tiling, 12x speed & subtitle extractor",
+            text="Extract embedded subtitle files from videos in bulk using PotPlayer",
             font=ctk.CTkFont(size=12),
             text_color=COLOR_TEXT_MUTED,
         )
-        subtitle_label.pack(anchor="w", pady=(2, 0))
+        subtitle_label.grid(row=1, column=1, sticky="w", pady=(1, 0))
 
         # --- 2. STATUS CARD ---
         self.status_card = ctk.CTkFrame(main_container, fg_color="#121820", corner_radius=12, border_width=1, border_color="#1f2937")
@@ -442,11 +646,12 @@ class ModernSubExtractorApp(ctk.CTk):
         ).pack(side="right")
 
         # Initial Log Message
-        self.log("🚀 PotPlayer Sub Extractor Studio initialized.")
+        self.log("🚀 Sub Extractor Studio initialized.")
         if self.controller.is_available():
             self.log(f"✅ PotPlayer detected at: {self.controller.potplayer_exe}")
+            self.log("⚡ H/W Built-in DXVA Decoder & Hardware Acceleration verified (Enabled).")
         else:
-            self.log("⚠️ PotPlayer executable not found in default paths! Please locate it in Settings.")
+            self.log("⚠️ PotPlayer executable not found! PotPlayer is required. Please locate it in Settings.")
 
     def log(self, message: str):
         """Append timestamped message to activity log."""
@@ -544,7 +749,7 @@ class ModernSubExtractorApp(ctk.CTk):
         if not self.controller.is_available():
             messagebox.showerror(
                 "PotPlayer Not Found",
-                "Could not find PotPlayer executable.\nPlease click 'Advanced Settings' and select PotPlayer.exe manually.",
+                "PotPlayer is required to use this application.\nPlease click 'Advanced Settings' and select PotPlayer.exe manually.",
             )
             return
 
@@ -564,31 +769,46 @@ class ModernSubExtractorApp(ctk.CTk):
         self.selected_folder.set(folder)
         self.log(f"📂 Selected Folder: {folder}")
 
-        videos = scan_video_files(folder, recursive=self.scan_recursive.get())
-        if not videos:
+        all_videos = scan_video_files(folder, recursive=self.scan_recursive.get())
+        if not all_videos:
             self.log(f"⚠️ No video files found in {folder}")
             self._update_system_status(status_text="No video files found")
             return
 
-        self.log(f"🔍 Found {len(videos)} video files across folder & subfolders (Naturally sorted).")
-        for i, v in enumerate(videos[:8]):
-            rel_name = os.path.relpath(v, folder)
-            self.log(f"   [{i+1}] {rel_name}")
-        if len(videos) > 8:
-            self.log(f"   ... and {len(videos) - 8} more files across subfolders.")
+        # Check if more than MAX_VIDEOS_PER_BATCH (20 videos limit)
+        if len(all_videos) > MAX_VIDEOS_PER_BATCH:
+            # Show custom modern themed warning dialog
+            dlg = HighLoadWarningDialog(self, video_count=len(all_videos), max_limit=MAX_VIDEOS_PER_BATCH)
+            self.wait_window(dlg)
+
+            if dlg.user_choice == "cancel":
+                self.log(f"🛑 Operation cancelled by user after seeing high processing load warning ({len(all_videos)} videos).")
+                self._update_system_status(status_text="Launch cancelled")
+                return
+
+            # User chose continue
+            self.log(f"⚠️ High Load: Found {len(all_videos)} videos. Proceeding with first {MAX_VIDEOS_PER_BATCH} videos.")
+            videos = all_videos[:MAX_VIDEOS_PER_BATCH]
+        else:
+            videos = all_videos
 
         left, top, right, bottom = get_screen_work_area()
-        screen_h = bottom - top
-        max_rows = max(1, screen_h // self.tile_min_h.get())
-        cols = (len(videos) + max_rows - 1) // max_rows
-        self.log(f"📐 Auto-Tiling Layout: {cols} Column(s) × Up to {max_rows} Rows per column")
+        cols = max(1, (len(videos) + MAX_GRID_ROWS - 1) // MAX_GRID_ROWS)
+        self.log(f"🔍 Loading {len(videos)} video files (Naturally sorted across {cols} column(s) of 10 rows).")
+        for i, v in enumerate(videos[:10]):
+            rel_name = os.path.relpath(v, folder)
+            self.log(f"   [{i+1}] {rel_name}")
+        if len(videos) > 10:
+            self.log(f"   ... and {len(videos) - 10} more files in Column 2.")
+
+        self.log(f"📐 Auto-Tiling Layout: {cols} Column(s) × 10 Rows per column (Screen Work Area: {right-left}×{bottom-top})")
 
         # Switch Button 2 to Crimson Cancel Style while running
         self.btn_select_launch.configure(
             text="⏹️  Cancel Launch Operation",
             **STYLE_BTN_CRIMSON
         )
-        self._update_system_status(is_running=True, status_text=f"Launching {len(videos)} videos...")
+        self._update_system_status(is_running=True, status_text=f"Launching {len(videos)} videos with H/W DXVA...")
 
         target_spd = self.target_speed.get()
         min_w = self.tile_min_w.get()
@@ -636,7 +856,7 @@ class ModernSubExtractorApp(ctk.CTk):
             text="⏸️  4. Pause All Players",
             **STYLE_BTN_AMBER
         )
-        self.log(f"🎉 Batch setup completed! {total_launched} PotPlayer instances running at {self.target_speed.get():.1f}x.")
+        self.log(f"🎉 Batch setup completed! {total_launched} PotPlayer instances running in 10x2 grid at {self.target_speed.get():.1f}x with H/W DXVA.")
         self._update_system_status()
 
     # --- BUTTON 3: SAVE SUBTITLES (Alt + S) ---

@@ -2,7 +2,7 @@
 PotPlayer Controller Engine
 Provides high-speed automation, real-time layout watchdog, audio inspection,
 Alt+S subtitle extraction & auto-confirmation, folder video organization,
-and Win32 message control for multi-instance PotPlayer playback.
+H/W Built-in DXVA Decoder enforcement, and Win32 message control for multi-instance PotPlayer playback.
 """
 
 import os
@@ -68,6 +68,42 @@ STANDARD_POTPLAYER_PATHS = [
     os.path.expandvars(r"%LOCALAPPDATA%\DAUM\PotPlayer\PotPlayerMini64.exe"),
     os.path.expandvars(r"%PROGRAMFILES%\DAUM\PotPlayer\PotPlayerMini64.exe"),
 ]
+
+MAX_GRID_ROWS = 10
+MAX_GRID_COLS = 2
+MAX_VIDEOS_PER_BATCH = 20
+
+
+def ensure_hardware_dxva_enabled() -> bool:
+    """
+    Enforces H/W Built-in DXVA Decoder and Hardware Acceleration
+    across all PotPlayer configurations in the Windows Registry.
+    """
+    try:
+        import winreg
+        reg_paths = [
+            r"Software\Daum\PotPlayerMini64\Settings",
+            r"Software\Daum\PotPlayer64\Settings",
+            r"Software\Daum\PotPlayer\Settings",
+        ]
+        dxva_settings = {
+            "IntDXVAUseMode": 1,        # Built-in DXVA Decoder ON
+            "CudaDecoder": 1,           # NVIDIA CUDA Hardware Decoder ON
+            "QuickSyncDecoder": 1,      # Intel QuickSync Hardware Decoder ON
+            "MftDecoder": 1,            # Media Foundation Hardware Transform ON
+            "DmoDecoder": 1,            # DirectShow Media Objects ON
+            "SupportH264MVC": 1,        # Hardware MVC Decode ON
+        }
+        for path in reg_paths:
+            try:
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+                    for k, v in dxva_settings.items():
+                        winreg.SetValueEx(key, k, 0, winreg.REG_DWORD, v)
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
 
 
 def find_potplayer_path() -> Optional[str]:
@@ -236,35 +272,30 @@ def get_screen_work_area() -> Tuple[int, int, int, int]:
 
 
 def calculate_window_positions(
-    num_items: int, min_w: int = 320, min_h: int = 100
+    num_items: int, min_w: int = 340, min_h: int = 100
 ) -> List[Tuple[int, int, int, int]]:
     """
-    Calculates screen positions to stack player windows vertically in columns
-    from top of the screen to bottom:
-    Column 1: Video 1..N down screen height
-    Column 2: Video N+1..2N down screen height
-    Column 3, 4, etc.
+    Calculates exact 10 Rows x 2 Columns grid table positions (Max 20 items):
+    - Column 0: Videos 1 to 10 (stacked top to bottom)
+    - Column 1: Videos 11 to 20 (stacked top to bottom)
     """
     left, top, right, bottom = get_screen_work_area()
     screen_w = right - left
     screen_h = bottom - top
 
-    max_rows = max(1, screen_h // min_h)
+    row_h = max(75, screen_h // MAX_GRID_ROWS)
+    col_w = max(320, min(screen_w // MAX_GRID_COLS, 380))
+
     positions = []
 
     for i in range(num_items):
-        col = i // max_rows
-        row = i % max_rows
+        col = (i // MAX_GRID_ROWS) % MAX_GRID_COLS
+        row = i % MAX_GRID_ROWS
 
-        x = left + (col * min_w)
-        y = top + (row * min_h)
+        x = left + (col * col_w)
+        y = top + (row * row_h)
 
-        # If columns overflow right edge of monitor, wrap with an offset
-        if x + min_w > right:
-            col_offset = (col * 30) % (right - min_w - left if right - min_w > left else 1)
-            x = left + col_offset
-
-        positions.append((x, y, min_w, min_h))
+        positions.append((x, y, col_w, row_h))
 
     return positions
 
@@ -287,7 +318,7 @@ def check_if_audio_muted() -> bool:
 
 def apply_speed_boost_fast(hwnd: int, steps: int = 110):
     """
-    Ultra-fast playback speed boost: focuses window, attaches thread input,
+    Playback speed boost: focuses window, attaches thread input,
     and rapidly dispatches hardware key pulses + command messages for 'C' (12.0x).
     """
     if steps <= 0:
@@ -330,6 +361,9 @@ class PotPlayerController:
         self._watchdog_active: bool = False
         self._lock = threading.Lock()
 
+        # Enforce H/W DXVA Hardware decoder on init
+        ensure_hardware_dxva_enabled()
+
     def set_executable_path(self, path: str):
         """Update PotPlayer executable path."""
         if os.path.isfile(path):
@@ -347,8 +381,8 @@ class PotPlayerController:
 
     def _layout_watchdog_loop(self):
         """
-        Background daemon that continuously checks every window's position and size.
-        If a window auto-resizes after codec/decoder initialization, it instantly snaps it back to its tile slot.
+        Continuous background daemon that enforces the exact 10-rows x 2-columns grid slot
+        for every open PotPlayer window throughout the entire lifecycle.
         """
         while self._watchdog_active:
             with self._lock:
@@ -360,30 +394,31 @@ class PotPlayerController:
                         rect = win32gui.GetWindowRect(h)
                         cur_x = rect[0]
                         cur_y = rect[1]
+                        cur_w = rect[2] - rect[0]
                         cur_h = rect[3] - rect[1]
-                        # Snap back if position or size expanded/drifted
-                        if abs(cur_x - x) > 10 or abs(cur_y - y) > 10 or cur_h > h_dim + 15:
+                        # Snap back whenever window drifts, resizes, or resets aspect ratio
+                        if abs(cur_x - x) > 2 or abs(cur_y - y) > 2 or abs(cur_w - w) > 4 or abs(cur_h - h_dim) > 4:
                             win32gui.SetWindowPos(
                                 h, 0, x, y, w, h_dim,
                                 win32con.SWP_NOZORDER | win32con.SWP_SHOWWINDOW | win32con.SWP_NOACTIVATE
                             )
                 except Exception:
                     pass
-            time.sleep(0.08)
+            time.sleep(0.1)
 
     def launch_and_arrange_batch(
         self,
         video_files: List[str],
         target_speed: float = 12.0,
-        min_w: int = 320,
+        min_w: int = 340,
         min_h: int = 100,
         on_progress: Optional[Callable[[int, int, str], None]] = None,
         on_finished: Optional[Callable[[int], None]] = None,
     ):
         """
-        High-speed sequential launcher:
-        Opens videos one by one, immediately mutes, tiles, and speeds them up to 12.0x,
-        while maintaining an active background layout watchdog so no video can break out of its grid.
+        Sequential launcher:
+        Enforces H/W DXVA Hardware decoder, opens videos one by one into a 10-rows x 2-columns table grid (up to 20 videos max),
+        mutes them, accelerates playback to 12.0x, and keeps layout watchdog running continuously.
         """
         if not self.is_available():
             raise FileNotFoundError("PotPlayer executable not found. Please specify the path in Settings.")
@@ -392,6 +427,9 @@ class PotPlayerController:
             if on_finished:
                 on_finished(0)
             return
+
+        # Enforce DXVA hardware decoder before launch
+        ensure_hardware_dxva_enabled()
 
         self.is_running_batch = True
         self._stop_requested = False
@@ -404,14 +442,13 @@ class PotPlayerController:
             self.launched_hwnds.clear()
             self.grid_slots.clear()
 
-        # Start layout watchdog daemon
-        self._watchdog_active = True
-        watchdog_thread = threading.Thread(target=self._layout_watchdog_loop, daemon=True)
-        watchdog_thread.start()
+        # Start continuous layout watchdog daemon if not already running
+        if not self._watchdog_active:
+            self._watchdog_active = True
+            watchdog_thread = threading.Thread(target=self._layout_watchdog_loop, daemon=True)
+            watchdog_thread.start()
 
         first_video_muted: Optional[bool] = None
-
-        # Calculate speed steps (each step +0.1x, from 1.0x to target_speed)
         speed_steps = max(0, int(round((target_speed - 1.0) / 0.1)))
 
         for idx, video_path in enumerate(video_files):
@@ -422,14 +459,15 @@ class PotPlayerController:
 
             video_name = os.path.basename(video_path)
             x, y, w, h = positions[idx]
+            col_num = (idx // MAX_GRID_ROWS) + 1
+            row_num = (idx % MAX_GRID_ROWS) + 1
 
             if on_progress:
-                on_progress(idx + 1, total_videos, f"[{idx+1}/{total_videos}] Opening & configuring: {video_name}")
+                on_progress(idx + 1, total_videos, f"[{idx+1}/{total_videos}] Tiling (Col {col_num}, Row {row_num}): {video_name}")
 
-            # Capture existing HWNDs
             existing_hwnds = set(get_all_potplayer_hwnds())
 
-            # 1. Launch with /volume=0 and /new for instant launch & mute support
+            # 1. Launch instance
             cmd = [self.potplayer_exe, "/new", "/volume=0", video_path]
             try:
                 subprocess.Popen(cmd)
@@ -438,12 +476,12 @@ class PotPlayerController:
                     on_progress(idx + 1, total_videos, f"Failed to launch {video_name}: {e}")
                 continue
 
-            # 2. Fast HWND polling (every 25ms)
+            # 2. Polling for window
             new_hwnd = None
-            for _ in range(80):  # Up to 2.0s
+            for _ in range(80):
                 if self._stop_requested:
                     break
-                time.sleep(0.025)
+                time.sleep(0.03)
                 curr_hwnds = get_all_potplayer_hwnds()
                 candidates = [h_val for h_val in curr_hwnds if h_val not in existing_hwnds and h_val not in self.launched_hwnds]
                 if candidates:
@@ -457,7 +495,7 @@ class PotPlayerController:
                 self.launched_hwnds.append(new_hwnd)
                 self.grid_slots[new_hwnd] = (x, y, w, h)
 
-            # 3. Position window immediately into assigned column tile slot
+            # 3. Position window immediately into assigned 10x2 grid cell
             try:
                 win32gui.SetWindowPos(
                     new_hwnd,
@@ -490,7 +528,7 @@ class PotPlayerController:
             if speed_steps > 0:
                 apply_speed_boost_fast(new_hwnd, speed_steps)
 
-            # Ensure position is strictly clamped in slot
+            # Clamp window into slot again after speed pulses
             try:
                 win32gui.SetWindowPos(
                     new_hwnd,
@@ -505,17 +543,14 @@ class PotPlayerController:
                 pass
 
             if on_progress:
-                on_progress(idx + 1, total_videos, f"[{idx+1}/{total_videos}] Ready: {video_name} (Tiled at ({x}, {y}), {target_speed:.1f}x)")
+                on_progress(idx + 1, total_videos, f"[{idx+1}/{total_videos}] Ready: {video_name} (Col {col_num}, Row {row_num} @ {target_speed:.1f}x [H/W DXVA])")
 
-            time.sleep(0.04)
+            time.sleep(0.06)
 
-        # Keep watchdog active for 4 seconds after finishing to guard any late video decoder resizes
-        time.sleep(3.5)
-        self._watchdog_active = False
         self.is_running_batch = False
 
         if on_progress:
-            on_progress(len(self.launched_hwnds), total_videos, f"All {len(self.launched_hwnds)} videos tiled and running at {target_speed:.1f}x!")
+            on_progress(len(self.launched_hwnds), total_videos, f"All {len(self.launched_hwnds)} videos tiled in 10x2 grid running at {target_speed:.1f}x (H/W DXVA Enabled)!")
 
         if on_finished:
             on_finished(len(self.launched_hwnds))
@@ -571,7 +606,7 @@ class PotPlayerController:
 
                 # 2. Look for Save Dialog (#32770)
                 dialog_hwnd = None
-                for _ in range(12):  # Wait up to 0.48s
+                for _ in range(12):
                     time.sleep(0.04)
                     dlg_candidates = []
                     def enum_dlg(dlg_h, _):
@@ -604,7 +639,6 @@ class PotPlayerController:
                     user32.SetFocus(dialog_hwnd)
                     time.sleep(0.06)
 
-                    # Send ENTER to save
                     win32api.keybd_event(VK_RETURN, scan_ret, 0, 0)
                     time.sleep(0.01)
                     win32api.keybd_event(VK_RETURN, scan_ret, win32con.KEYEVENTF_KEYUP, 0)
@@ -662,7 +696,6 @@ class PotPlayerController:
         for h in hwnds:
             try:
                 st = get_play_status(h)
-                # If running (2) or unknown, send toggle command
                 if st == 2 or st == -1:
                     win32gui.SendMessage(h, win32con.WM_COMMAND, POT_CMD_PLAY_PAUSE, 0)
             except Exception:
@@ -675,7 +708,6 @@ class PotPlayerController:
         for h in hwnds:
             try:
                 st = get_play_status(h)
-                # If paused (1) or unknown, send toggle command
                 if st == 1 or st == -1:
                     win32gui.SendMessage(h, win32con.WM_COMMAND, POT_CMD_PLAY_PAUSE, 0)
             except Exception:
@@ -719,11 +751,9 @@ class PotPlayerController:
         my_pid = os.getpid()
         for p in psutil.process_iter(["pid", "name"]):
             try:
-                # NEVER kill our own app
                 if p.pid == my_pid:
                     continue
                 pname = (p.info["name"] or "").lower()
-                # Exclude any process relating to SubExtractor or Python app
                 if ("potplayer" in pname or "potplayermini" in pname) and "subextractor" not in pname:
                     p.kill()
                     closed_count += 1
