@@ -126,6 +126,30 @@ def get_resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
+def center_window_on_screen(window, width: int = 620, height: int = 820, y_ratio: float = 0.25):
+    """
+    Calculates and applies window coordinates:
+    - Horizontally: perfectly centered (X).
+    - Vertically: positioned higher towards the top of the monitor workspace (Y).
+    """
+    try:
+        import win32api
+        mon_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0, 0)))
+        left, top, right, bottom = mon_info.get("Work", (0, 0, 1920, 1080))
+        screen_w = right - left
+        screen_h = bottom - top
+        x = left + max(0, (screen_w - width) // 2)
+        avail_h = max(0, screen_h - height)
+        y = top + max(35, int(avail_h * y_ratio))
+    except Exception:
+        screen_w = window.winfo_screenwidth()
+        screen_h = window.winfo_screenheight()
+        x = max(0, (screen_w - width) // 2)
+        avail_h = max(0, screen_h - height)
+        y = max(35, int(avail_h * y_ratio))
+    window.geometry(f"{width}x{height}+{x}+{y}")
+
+
 class HighLoadWarningDialog(ctk.CTkToplevel):
     """
     Modern glassmorphic warning modal dialog matching application theme.
@@ -319,8 +343,10 @@ class ModernSubExtractorApp(ctk.CTk):
         super().__init__()
 
         self.title("Sub Extractor Studio")
-        self.geometry("620x820")
         self.minsize(560, 720)
+
+        # Always center window on screen on startup
+        center_window_on_screen(self, 620, 820)
 
         # Controller instance
         self.controller = PotPlayerController()
@@ -347,6 +373,10 @@ class ModernSubExtractorApp(ctk.CTk):
 
         # Initial checks
         self._update_system_status()
+
+        # Re-assert centered geometry once widgets and DPI scaling are fully realized
+        self.after(10, lambda: center_window_on_screen(self, 620, 820))
+        self.after(60, lambda: center_window_on_screen(self, 620, 820))
 
     def _setup_window_icon(self):
         """Set application icon if available."""

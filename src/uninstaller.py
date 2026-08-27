@@ -1,6 +1,6 @@
 """
 Sub Extractor - Dedicated Windows Uninstaller
-Safely removes all installed files, shortcuts, and Windows Add/Remove Programs registry entries.
+Safely removes all installed files, shortcuts, and Windows Add/Remove Programs registry entries with UAC Admin privileges.
 """
 
 import os
@@ -10,8 +10,38 @@ import winreg
 import shutil
 import subprocess
 import threading
+import ctypes
 import customtkinter as ctk
 from tkinter import messagebox
+
+
+def is_admin() -> bool:
+    """Check if the current process has administrative privileges."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def elevate_if_needed():
+    """Relaunches the uninstaller with Administrator rights if not already elevated."""
+    if not is_admin():
+        try:
+            if getattr(sys, "frozen", False):
+                exe = sys.executable
+                params = " ".join([f'"{a}"' for a in sys.argv[1:]])
+            else:
+                exe = sys.executable
+                params = f'"{os.path.abspath(__file__)}" ' + " ".join([f'"{a}"' for a in sys.argv[1:]])
+
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
+            if ret > 32:
+                sys.exit(0)
+        except Exception:
+            pass
+
+
+elevate_if_needed()
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -44,49 +74,85 @@ def remove_registry_entry():
 
 
 def remove_shortcuts():
-    """Remove Desktop and Start Menu shortcuts."""
-    # Desktop shortcut
-    try:
-        desktop = os.path.join(os.environ["USERPROFILE"], "Desktop")
-        s1 = os.path.join(desktop, "Sub Extractor.lnk")
-        if os.path.isfile(s1):
-            os.remove(s1)
-        # Also clean up old name if present
-        s1_old = os.path.join(desktop, "PotPlayer Sub Extractor.lnk")
-        if os.path.isfile(s1_old):
-            os.remove(s1_old)
-    except Exception:
-        pass
+    """Remove Desktop and Start Menu shortcuts across all user and system profiles."""
+    # 1. Desktop shortcuts (User and Public)
+    desktop_dirs = [
+        os.path.join(os.environ.get("USERPROFILE", ""), "Desktop"),
+        r"C:\Users\Public\Desktop",
+    ]
+    for d in desktop_dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        for name in ("Sub Extractor.lnk", "PotPlayer Sub Extractor.lnk"):
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
 
-    # Start Menu shortcut
+    # 2. Start Menu Program shortcuts (User and AllUsers/ProgramData)
+    start_menu_dirs = [
+        os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs"),
+        os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), r"Microsoft\Windows\Start Menu\Programs"),
+        r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
+    ]
+    for sm in start_menu_dirs:
+        if not sm or not os.path.isdir(sm):
+            continue
+        # Check standalone lnk files
+        for name in ("Sub Extractor.lnk", "PotPlayer Sub Extractor.lnk"):
+            p = os.path.join(sm, name)
+            if os.path.isfile(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+        # Check folders
+        for folder_name in ("Sub Extractor", "PotPlayer Sub Extractor"):
+            fp = os.path.join(sm, folder_name)
+            if os.path.isdir(fp):
+                try:
+                    shutil.rmtree(fp, ignore_errors=True)
+                except Exception:
+                    pass
+
+
+def center_window_on_screen(window, width: int = 520, height: int = 350):
+    """Calculates and applies exact center coordinates based on current monitor work area."""
     try:
-        appdata = os.environ.get("APPDATA", "")
-        start_menu = os.path.join(appdata, r"Microsoft\Windows\Start Menu\Programs")
-        s2 = os.path.join(start_menu, "Sub Extractor.lnk")
-        if os.path.isfile(s2):
-            os.remove(s2)
-        s2_folder = os.path.join(start_menu, "Sub Extractor")
-        if os.path.isdir(s2_folder):
-            shutil.rmtree(s2_folder, ignore_errors=True)
-        # Old folder cleanup
-        s2_old = os.path.join(start_menu, "PotPlayer Sub Extractor")
-        if os.path.isdir(s2_old):
-            shutil.rmtree(s2_old, ignore_errors=True)
+        import win32api
+        mon_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0, 0)))
+        left, top, right, bottom = mon_info.get("Work", (0, 0, 1920, 1080))
+        screen_w = right - left
+        screen_h = bottom - top
+        x = left + max(0, (screen_w - width) // 2)
+        y = top + max(0, (screen_h - height) // 2)
     except Exception:
-        pass
+        screen_w = window.winfo_screenwidth()
+        screen_h = window.winfo_screenheight()
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+    window.geometry(f"{width}x{height}+{x}+{y}")
 
 
 class UninstallerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Uninstall - Sub Extractor")
-        self.geometry("520x350")
         self.resizable(False, False)
         self.configure(fg_color=COLOR_BG_DARK)
+
+        # Center window on screen
+        center_window_on_screen(self, 520, 350)
 
         self.install_dir = get_install_dir()
         self._setup_icon()
         self._create_widgets()
+
+        # Re-assert centered geometry once widgets and DPI scaling are fully realized
+        self.after(10, lambda: center_window_on_screen(self, 520, 350))
+        self.after(60, lambda: center_window_on_screen(self, 520, 350))
 
     def _setup_icon(self):
         ico_path = os.path.join(self.install_dir, "assets", "app_icon.ico")
@@ -99,115 +165,119 @@ class UninstallerApp(ctk.CTk):
                 pass
 
     def _create_widgets(self):
-        frame = ctk.CTkFrame(self, fg_color=COLOR_CARD_BG, corner_radius=16, border_width=1, border_color="#30363d")
-        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        self.container = ctk.CTkFrame(self, fg_color="transparent")
+        self.container.pack(fill="both", expand=True, padx=24, pady=20)
 
-        title = ctk.CTkLabel(
-            frame,
-            text="Uninstall Sub Extractor",
-            font=ctk.CTkFont(size=17, weight="bold"),
-            text_color="#fda4af",
+        # Card
+        card = ctk.CTkFrame(self.container, fg_color=COLOR_CARD_BG, corner_radius=14, border_width=1, border_color="#30363d")
+        card.pack(fill="both", expand=True, pady=(0, 16))
+
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=20, pady=18)
+
+        icon_lbl = ctk.CTkLabel(inner, text="🗑️", font=ctk.CTkFont(size=32))
+        icon_lbl.pack(pady=(0, 8))
+
+        ctk.CTkLabel(
+            inner,
+            text=f"Uninstall {APP_NAME}?",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=COLOR_TEXT_MAIN
+        ).pack(pady=(0, 6))
+
+        desc = (
+            f"Are you sure you want to completely remove {APP_NAME} and all of its components "
+            f"from your computer?\n\nInstallation Directory:\n{self.install_dir}"
         )
-        title.pack(pady=(20, 8), padx=20, anchor="w")
-
-        desc = ctk.CTkLabel(
-            frame,
-            text="Are you sure you want to completely remove Sub Extractor and all of its components from:\n" + self.install_dir + "?",
+        ctk.CTkLabel(
+            inner,
+            text=desc,
             font=ctk.CTkFont(size=12),
             text_color=COLOR_TEXT_MUTED,
-            justify="left",
-            wraplength=440,
-        )
-        desc.pack(pady=(0, 15), padx=20, anchor="w")
+            justify="center",
+            wraplength=440
+        ).pack(pady=(0, 12))
 
-        self.progress_bar = ctk.CTkProgressBar(frame, height=8, corner_radius=4, fg_color="#21262d", progress_color="#ff1744")
-        self.progress_bar.pack(fill="x", padx=20, pady=(10, 5))
-        self.progress_bar.set(0)
+        # Progress Section
+        self.progress_bar = ctk.CTkProgressBar(inner, height=8, corner_radius=4, progress_color=COLOR_ACCENT_RED, fg_color="#21262d")
+        self.status_lbl = ctk.CTkLabel(inner, text="", font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_MUTED)
 
-        self.status_label = ctk.CTkLabel(
-            frame,
-            text="Ready to uninstall",
-            font=ctk.CTkFont(size=11),
-            text_color=COLOR_TEXT_MUTED,
-        )
-        self.status_label.pack(pady=(2, 15), padx=20, anchor="w")
+        # Buttons
+        btn_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        btn_frame.pack(fill="x", side="bottom")
 
-        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
-        btn_row.pack(fill="x", padx=20, pady=(0, 15), side="bottom")
-
-        self.btn_cancel = ctk.CTkButton(
-            btn_row,
+        self.cancel_btn = ctk.CTkButton(
+            btn_frame,
             text="Cancel",
             font=ctk.CTkFont(size=13),
+            height=40,
+            width=90,
             fg_color="#21262d",
             hover_color="#30363d",
-            command=self.destroy,
-            width=100,
-            height=36,
+            command=self.destroy
         )
-        self.btn_cancel.pack(side="right", padx=(10, 0))
+        self.cancel_btn.pack(side="left")
 
-        self.btn_uninstall = ctk.CTkButton(
-            btn_row,
-            text="Uninstall",
+        self.uninst_btn = ctk.CTkButton(
+            btn_frame,
+            text="Uninstall Now",
             font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#4d1524",
-            hover_color="#701a31",
-            text_color="#fda4af",
-            border_color="#e11d48",
-            border_width=1,
-            command=self.start_uninstall,
-            width=110,
-            height=36,
+            height=40,
+            fg_color=COLOR_ACCENT_RED,
+            hover_color="#c40e34",
+            text_color="#ffffff",
+            command=self.start_uninstall
         )
-        self.btn_uninstall.pack(side="right")
+        self.uninst_btn.pack(side="right", fill="x", expand=True, padx=(12, 0))
 
     def start_uninstall(self):
-        self.btn_uninstall.configure(state="disabled")
-        self.btn_cancel.configure(state="disabled")
+        self.uninst_btn.configure(state="disabled", text="Uninstalling...")
+        self.cancel_btn.configure(state="disabled")
 
-        def worker():
-            self.status_label.configure(text="Removing registry keys...")
-            self.progress_bar.set(0.3)
+        self.progress_bar.pack(fill="x", pady=(8, 4))
+        self.status_lbl.pack(anchor="center")
+        self.progress_bar.set(0.2)
+        self.status_lbl.configure(text="Removing shortcuts and registry entries...")
+
+        threading.Thread(target=self._uninstall_worker, daemon=True).start()
+
+    def _uninstall_worker(self):
+        try:
+            time.sleep(0.3)
             remove_registry_entry()
-            time.sleep(0.4)
-
-            self.status_label.configure(text="Removing Desktop and Start Menu shortcuts...")
-            self.progress_bar.set(0.6)
             remove_shortcuts()
+            self.after(0, lambda: self.progress_bar.set(0.6))
+            self.after(0, lambda: self.status_lbl.configure(text="Cleaning up files..."))
+            time.sleep(0.3)
+
+            target_dir = self.install_dir
+            if os.path.isdir(target_dir):
+                temp_dir = os.environ.get("TEMP", r"C:\Windows\Temp")
+                bat_path = os.path.join(temp_dir, "subextractor_cleanup.bat")
+                bat_content = "@echo off\r\ntimeout /t 2 /nobreak > NUL\r\nrd /s /q \"" + target_dir + "\"\r\ndel \"%~f0\"\r\n"
+                with open(bat_path, "w", encoding="utf-8") as f:
+                    f.write(bat_content)
+                subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
+
+            self.after(0, lambda: self.progress_bar.set(1.0))
+            self.after(0, lambda: self.status_lbl.configure(text="Uninstallation completed!"))
             time.sleep(0.4)
 
-            self.status_label.configure(text="Removing application files...")
-            self.progress_bar.set(0.9)
-            time.sleep(0.4)
-
-            self.progress_bar.set(1.0)
-            self.status_label.configure(text="Uninstallation complete!")
-
-            # Schedule self-deletion of directory
-            cleanup_bat = os.path.join(os.environ.get("TEMP", "C:\Temp"), "cleanup_subextractor.bat")
-            cur_pid = os.getpid()
-            with open(cleanup_bat, "w", encoding="utf-8") as f:
-                f.write("@echo off\n")
-                f.write("timeout /t 2 /nobreak > nul\n")
-                f.write(f"taskkill /F /PID {cur_pid} > nul 2>&1\n")
-                f.write(f'rd /s /q "{self.install_dir}" > nul 2>&1\n')
-                f.write('del "%~f0" > nul 2>&1\n')
-
-            subprocess.Popen(["cmd.exe", "/c", cleanup_bat], creationflags=0x08000000)
-
-            def finish_ui():
-                messagebox.showinfo(
-                    "Uninstall Complete",
-                    "Sub Extractor was successfully removed from your computer.",
-                )
+            def done():
+                messagebox.showinfo("Uninstalled", f"{APP_NAME} was successfully removed from your computer.")
                 self.destroy()
 
-            self.after(0, finish_ui)
+            self.after(0, done)
 
-        threading.Thread(target=worker, daemon=True).start()
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Uninstall Error", f"Failed to uninstall: {e}"))
+            self.after(0, self.destroy)
+
+
+def run_uninstaller():
+    app = UninstallerApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":
-    app = UninstallerApp()
-    app.mainloop()
+    run_uninstaller()
